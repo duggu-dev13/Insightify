@@ -34,7 +34,7 @@ pip install transformers torch opencv-python pillow numpy
 ```python insightify_v1.py ``` <br>
 press q to quit the video feed.
 
-### 🌐 Version 2 – Web-Based Application
+## 🌐 Version 2 – Web-Based Application
 This version is a browser-based interface built with HTML, CSS, and JavaScript that:
 
 - Captures webcam feed from the browser
