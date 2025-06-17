@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Camera Interaction App</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #111827;
+      --card: #1f2937;
+      --accent: #3b82f6;
+      --text: #f9fafb;
+      --muted: #9ca3af;
+      --border: #374151;
+    }
+
+    body {
+      margin: 0;
+      padding: 2rem;
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      font-weight: 600;
+    }
+
+    video {
+      width: 100%;
+      max-width: 500px;
+      height: auto;
+      border-radius: 12px;
+      border: 2px solid var(--border);
+    }
+
+    .card {
+      background-color: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      width: 100%;
+      max-width: 700px;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+
+    label {
+      font-size: 0.875rem;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+      display: inline-block;
+    }
+
+    input[type="text"], textarea, select {
+      width: 100%;
+      padding: 0.75rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background-color: #111827;
+      color: var(--text);
+      font-size: 0.9rem;
+      resize: none;
+    }
+
+    textarea {
+      height: 2.5rem;
+    }
+
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: center;
+    }
+
+    #startButton {
+      padding: 0.7rem 1.5rem;
+      font-size: 1rem;
+      font-weight: 500;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.3s ease;
+      color: white;
+    }
+
+    #startButton.start {
+      background-color: var(--accent);
+    }
+
+    #startButton.start:hover {
+      background-color: #2563eb;
+    }
+
+    #startButton.stop {
+      background-color: #ef4444;
+    }
+
+    #startButton.stop:hover {
+      background-color: #dc2626;
+    }
+
+    canvas.hidden {
+      display: none;
+    }
+
+    @media (max-width: 600px) {
+      .controls {
+        flex-direction: column;
+        align-items: stretch;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Insightify</h1>
+
+  <video id="videoFeed" autoplay playsinline></video>
+  <canvas id="canvas" class="hidden"></canvas>
+
+  <div class="card">
+    <div>
+      <label for="baseURL">Base API Endpoint</label>
+      <input id="baseURL" type="text" value="http://localhost:8080" />
+    </div>
+    <div>
+      <label for="instructionText">Instruction</label>
+      <textarea id="instructionText" placeholder="What do you see?"></textarea>
+    </div>
+    <div>
+      <label for="responseText">Response</label>
+      <textarea id="responseText" readonly placeholder="Server response will appear here..."></textarea>
+    </div>
+  </div>
+
+  <div class="card controls">
+    <div style="flex: 1;">
+      <label for="intervalSelect">Interval between 2 requests</label>
+      <select id="intervalSelect">
+        <option value="100">100ms</option>
+        <option value="250">250ms</option>
+        <option value="500" selected>500ms</option>
+        <option value="1000">1s</option>
+        <option value="2000">2s</option>
+      </select>
+    </div>
+    <button id="startButton" class="start">Start</button>
+  </div>
+
+  <script>
+    const video = document.getElementById('videoFeed');
+    const canvas = document.getElementById('canvas');
+    const baseURL = document.getElementById('baseURL');
+    const instructionText = document.getElementById('instructionText');
+    const responseText = document.getElementById('responseText');
+    const intervalSelect = document.getElementById('intervalSelect');
+    const startButton = document.getElementById('startButton');
+
+    instructionText.value = "Explain What is going on";
+
+    let stream;
+    let intervalId;
+    let isProcessing = false;
+
+    async function sendChatCompletionRequest(instruction, imageBase64URL) {
+      const response = await fetch(`${baseURL.value}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          max_tokens: 100,
+          messages: [
+            { role: 'user', content: [
+              { type: 'text', text: instruction },
+              { type: 'image_url', image_url: { url: imageBase64URL } }
+            ]}
+          ]
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        return `Server error: ${response.status} - ${errorData}`;
+      }
+
+      const data = await response.json();
+      return data.choices[0].message.content;
+    }
+
+    async function initCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        video.srcObject = stream;
+        responseText.value = "Camera access granted. Ready to start.";
+      } catch (err) {
+        console.error("Error accessing camera:", err);
+        responseText.value = `Camera error: ${err.name} - ${err.message}`;
+        alert(`Please allow camera access. Error: ${err.name}`);
+      }
+    }
+
+    function captureImage() {
+      if (!stream || video.readyState < 2) return null;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', 0.8);
+    }
+
+    async function sendData() {
+      if (!isProcessing) return;
+
+      const instruction = instructionText.value;
+      const imageBase64URL = captureImage();
+
+      if (!imageBase64URL) {
+        responseText.value = "Failed to capture image.";
+        return;
+      }
+
+      try {
+        const response = await sendChatCompletionRequest(instruction, imageBase64URL);
+        responseText.value = response;
+      } catch (error) {
+        console.error("Error sending data:", error);
+        responseText.value = `Error: ${error.message}`;
+      }
+    }
+
+    function handleStart() {
+      if (!stream) {
+        alert("Camera not ready.");
+        return;
+      }
+
+      isProcessing = true;
+      startButton.textContent = "Stop";
+      startButton.classList.remove('start');
+      startButton.classList.add('stop');
+      instructionText.disabled = true;
+      intervalSelect.disabled = true;
+      responseText.value = "Processing started...";
+
+      const intervalMs = parseInt(intervalSelect.value, 10);
+      sendData();
+      intervalId = setInterval(sendData, intervalMs);
+    }
+
+    function handleStop() {
+      isProcessing = false;
+      if (intervalId) clearInterval(intervalId);
+      intervalId = null;
+
+      startButton.textContent = "Start";
+      startButton.classList.remove('stop');
+      startButton.classList.add('start');
+      instructionText.disabled = false;
+      intervalSelect.disabled = false;
+      responseText.value = "Processing stopped.";
+    }
+
+    startButton.addEventListener('click', () => {
+      isProcessing ? handleStop() : handleStart();
+    });
+
+    window.addEventListener('DOMContentLoaded', initCamera);
+    window.addEventListener('beforeunload', () => {
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      if (intervalId) clearInterval(intervalId);
+    });
+  </script>
+</body>
+</html>
+
+
